@@ -14,31 +14,10 @@ import spray.http.StatusCodes
 import scala.concurrent.ExecutionContext
 import scala.collection.JavaConverters._
 import scala.util._
+import spray.http.{HttpRequest, HttpResponse, HttpHeader}
+import java.net.URL
 
-trait BurnerService extends HttpService {
-
-	def eventRoute(implicit ec: ExecutionContext) = path("event") {
-		post {
-	    	entity(as[Event]) { e => 
-	    		// detach here for Future? (re-read SO thread - http://stackoverflow.com/q/31364405/409976)
-	    		// Johannes replied ~8 months ago
-				onComplete(handleEvent(e)) { 
-					case Success(_) => 
-						complete(StatusCodes.OK)
-					case Failure(err) =>
-						complete(StatusCodes.InternalServerError -> err.toString)
-				}
-	    	}
-		}
-	}
-
-	def reportRoute(implicit ec: ExecutionContext) = path("report") {		
-		get { 
-			complete { 
-				convertMap(imageVoting)
-			}
-		}
-	}
+object BurnerService {
 
 	private def convertMap(votingMap: AtomicLongMap[ImageName]): JsObject = {
 		val map: Map[ImageName, java.lang.Long] = 
@@ -48,17 +27,81 @@ trait BurnerService extends HttpService {
 		}
 		JsObject(jsonMap)
 	}
+}
 
-	def rootRoute = 
-		eventRoute(actorRefFactory.dispatcher) ~ reportRoute(actorRefFactory.dispatcher)
+trait BurnerService extends DropboxService with HttpService {
 
-	private def handleEvent(event: Event): Future[Option[Long]] = {
+	import BurnerService._
+
+	def eventRoute(authHeader: HttpHeader,
+				   pipeline: HttpRequest => Future[HttpResponse])(implicit ec: ExecutionContext) = 
+	   path("event") {
+			post {
+		    	entity(as[Event]) { e => 
+		    		// detach here for Future? (re-read SO thread - http://stackoverflow.com/q/31364405/409976)
+					onComplete(handleEvent(e, authHeader, pipeline)) { 
+						case Success(_) => 
+							complete(StatusCodes.OK)
+						case Failure(err) =>
+							complete(StatusCodes.InternalServerError -> err.toString)
+					}
+		    	}
+			}
+		}
+
+	def reportRoute(authHeader: HttpHeader,
+					pipeline: HttpRequest => Future[HttpResponse])(implicit ec: ExecutionContext) = 
+		path("report") {		
+			get { 
+				complete { 
+					convertMap(imageVoting)
+				}
+			}
+		}
+
+	def rootRoute(authHeader: HttpHeader, 
+		          pipeline: HttpRequest => Future[HttpResponse]) =
+		eventRoute(authHeader, pipeline)(actorRefFactory.dispatcher) ~ 
+		reportRoute(authHeader, pipeline)(actorRefFactory.dispatcher)
+
+	private def handleEvent(event: Event,
+							authHeader: HttpHeader, 
+        					pipeline: HttpRequest => Future[HttpResponse])
+							(implicit ec: ExecutionContext): Future[Unit] = {
 		event match {
 			case InboundMedia(picture, _ , _) =>
-				// TODO: upload to dropbox
-				Future.successful(Some(imageVoting.getAndIncrement(picture)))
-			case _ =>
-				Future.successful(None) 
+				handleMedia(picture, authHeader, pipeline)
+				// Future.successful(Some(imageVoting.getAndIncrement(picture.getFile)))
+			case InboundText(message,_,_) =>
+				handleText(message, authHeader, pipeline)
+			case Voicemail(_,_,_) =>
+				Future.successful( () ) 
 		}		
 	}
+
+	private def handleMedia(picture: URL, 
+							authHeader: HttpHeader,
+		                    pipeline: HttpRequest => Future[HttpResponse])
+							(implicit ec: ExecutionContext): Future[Unit] = {
+		val fileName = picture.getPath
+	getFile(fileName, authHeader, pipeline).flatMap {
+				case Exists => 
+					Future.successful( () )
+				case DoesNotExist => 
+					uploadFile(picture, authHeader, pipeline)
+			}	
+	}
+
+	private def handleText(message: String, 
+		                   authHeader: HttpHeader,
+		                   pipeline: HttpRequest => Future[HttpResponse])
+						  (implicit ec: ExecutionContext): Future[Unit] = 
+		getFile(message, authHeader, pipeline).flatMap {
+			case Exists => 
+				imageVoting.getAndIncrement(message)
+				Future.successful( () )
+			case DoesNotExist => 
+				Future.successful( () )				
+		}	
+
 }

@@ -3,6 +3,8 @@ package net
 import spray.json._
 import DefaultJsonProtocol._
 import net.model.AST._
+import java.net.URL
+import scala.util._
 
 package object model {
 
@@ -15,6 +17,25 @@ package object model {
 		}
 	}
 
+	implicit val urlReader = new JsonFormat[URL] {
+		override def read(x: JsValue): URL = x match {
+			case JsString(str) => 
+				Try { new URL(str) } match {
+					case Success(url) => 
+						url
+					case Failure(e)   => 
+						deserializationError(s"Expected URL, but got $x")
+			}
+			case unexpectedJson => 
+				deserializationError(s"Expected String for URL, but got $unexpectedJson")
+		}
+
+		override def write(url: URL): JsValue = 
+			JsString(url.toString)
+	}
+
+	// Although we only need a RootJsonReader[X] for the following 3 
+	// `Event`'s, I chose to use `jsonFormat3(X.apply)`  for conciseness.
 	val inboundTextFormat: RootJsonFormat[InboundText] = 
 		jsonFormat3(InboundText.apply)
 
@@ -36,5 +57,29 @@ package object model {
 				deserializationError(s"Expected Json Object with key-value `type` pair for an `Event`, but got ${fields})")
 		}
 	}
+
+	implicit val uploadFileStatusFormat = new JsonFormat[UploadFileStatus] {
+		override def read(x: JsValue): UploadFileStatus = x match {
+			case JsString(str) => 
+				UploadFileStatus.read(str).getOrElse(
+					deserializationError(s"Expected valid Upload File Status, but got ${str}")
+				)
+			case unexpectedJson =>
+				deserializationError(s"Expected String for UploadFileStatus, but got ${unexpectedJson}")
+		}
+
+		override def write(x: UploadFileStatus): JsValue = 
+			JsString {
+				x match {
+					case Pending     => "PENDING"
+					case Complete    => "COMPLETE"
+					case Downloading => "DOWNLOADING"
+					case Failed  	 => "FAILED"
+				}
+			}
+	}
+
+	implicit val uploadFileStatusResponseFormat: RootJsonFormat[UploadFileStatusResponse] = 
+		jsonFormat2(UploadFileStatusResponse.apply)
 
 }
