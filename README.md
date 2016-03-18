@@ -30,7 +30,7 @@ $./test_script.sh
 
 ### Testing Data in POSTMAN
 
-Please import the POSTMAN [JSON samples](https://github.com/github/kevinmeredith/blob/master/postman_testing.json). 
+Please import the POSTMAN [JSON samples](https://github.com/kevinmeredith/burner_dev/blob/master/postman_testing.json). 
 
 It contains 5 HTTP Requests:
 
